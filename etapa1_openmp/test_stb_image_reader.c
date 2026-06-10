@@ -8,7 +8,7 @@
  *
  * Uso:
  *   ./test_stb_image_reader <image_path>
- *   ./test_stb_image_reader ../dataset/raw/clase_0/PNG1.png
+ *   ./test_stb_image_reader ../dataset/raw/clase_0/img_0001.jpeg
  */
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
 {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <image_path>\n", argv[0]);
-        fprintf(stderr, "Example: %s ../dataset/raw/clase_0/PNG1.png\n",
+        fprintf(stderr, "Example: %s ../dataset/raw/clase_0/img_0001.jpeg\n",
                 argv[0]);
         return EXIT_FAILURE;
     }
