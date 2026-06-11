@@ -21,7 +21,7 @@ func renameInFolder(folderPath string) error {
 		}
 		name := e.Name()
 		lower := strings.ToLower(name)
-		if strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".jpg") {
+		if strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".png") {
 			jpegs = append(jpegs, name)
 		}
 	}
