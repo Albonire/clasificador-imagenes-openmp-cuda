@@ -11,6 +11,43 @@ Código fuente en C del pipeline de preprocesamiento paralelizado con OpenMP.
 6. Aplanado a vector de 4096
 7. Exportación del dataset (CSV o binario)
 
+## Línea base serial (1 hilo)
+
+`preprocess_serial.c` implementa el pipeline completo en C sin OpenMP para usarlo
+como referencia antes de paralelizar.
+
+### Compilar
+
+Desde `etapa1_openmp/`:
+
+```bash
+gcc -Wall -Wextra -O2 -o preprocess_serial preprocess_serial.c -lm
+```
+
+### Ejecutar
+
+Con rutas por defecto:
+
+```bash
+./preprocess_serial
+```
+
+Con rutas explícitas:
+
+```bash
+./preprocess_serial ../dataset/raw ../dataset/procesado/dataset_serial.csv
+```
+
+La salida queda en `dataset/procesado/dataset_serial.csv` con este formato:
+
+```text
+label,pixel_0,pixel_1,...,pixel_4095
+```
+
+Etiquetas usadas:
+- `clase_0` -> `0` (ojos abiertos)
+- `clase_1` -> `1` (ojos cerrados)
+
 ## Mediciones
 - Tiempo en serie (1 hilo) — línea base
 - Tiempo con OpenMP: 2, 4, 8... hilos
