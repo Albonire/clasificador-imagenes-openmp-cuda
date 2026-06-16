@@ -2,6 +2,10 @@
 
 Kernels propios de CUDA para entrenar una MLP desde cero, más la versión CPU para comparar speedup.
 
+## Estructura
+- `cpu_baseline/` — modelo en TensorFlow forzado a CPU, línea base para el speedup.
+- `gpu_model/` — `train_gpu.cu` (kernels CUDA propios) orquestado por `model-gpu.ipynb` en Google Colab.
+
 ## Kernels a implementar
 - Multiplicación matriz–vector / matriz–matriz (forward)
 - Suma de bias + ReLU
