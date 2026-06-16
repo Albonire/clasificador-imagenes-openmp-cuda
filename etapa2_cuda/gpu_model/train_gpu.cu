@@ -40,7 +40,9 @@
  *   float32[1]                         b2
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,7 +77,7 @@ typedef struct {
 /* Carga de datos (CSV: label,pixel_0,...,pixel_4095)                       */
 /* ------------------------------------------------------------------------ */
 
-static int count_data_rows(const char *path)
+int count_data_rows(const char *path)
 {
     FILE *fp = fopen(path, "r");
     if (fp == NULL) {
@@ -104,7 +106,7 @@ static int count_data_rows(const char *path)
     return newline_count - 1; /* resta la fila de encabezado */
 }
 
-static int load_dataset(const char *path, dataset_t *out)
+int load_dataset(const char *path, dataset_t *out)
 {
     int n_rows = count_data_rows(path);
     if (n_rows <= 0) {
@@ -184,8 +186,7 @@ static int load_dataset(const char *path, dataset_t *out)
     return 1;
 }
 
-static void free_dataset(dataset_t *d)
-{
+void free_dataset(dataset_t *d) {
     free(d->x);
     free(d->y);
     d->x = NULL;
@@ -197,14 +198,12 @@ static void free_dataset(dataset_t *d)
 /* Inicializacion de pesos (Glorot/Xavier uniforme, semilla fija)           */
 /* ------------------------------------------------------------------------ */
 
-static float rand_uniform(float limit)
-{
+float rand_uniform(float limit) {
     float r = (float)rand() / (float)RAND_MAX;
     return (r * 2.0f - 1.0f) * limit;
 }
 
-static void init_glorot_uniform(float *data, int fan_in, int fan_out)
-{
+void init_glorot_uniform(float *data, int fan_in, int fan_out) {
     float limit = sqrtf(6.0f / (float)(fan_in + fan_out));
     size_t total = (size_t)fan_in * (size_t)fan_out;
     for (size_t i = 0; i < total; i++) {
@@ -216,15 +215,12 @@ static void init_glorot_uniform(float *data, int fan_in, int fan_out)
 /* Utilidades de tiempo y de E/S de pesos                                   */
 /* ------------------------------------------------------------------------ */
 
-static double elapsed_seconds(struct timespec start, struct timespec end)
-{
+double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
            (double)(end.tv_nsec - start.tv_nsec) / 1e9;
 }
 
-static int save_weights(const char *path, const float *w1, const float *b1,
-                         const float *w2, const float *b2,
-                         int input_dim, int hidden_units)
+int save_weights(const char *path, const float *w1, const float *b1, const float *w2, const float *b2, int input_dim, int hidden_units)
 {
     FILE *fp = fopen(path, "wb");
     if (fp == NULL) {
@@ -255,9 +251,7 @@ static int save_weights(const char *path, const float *w1, const float *b1,
  * tiempo de ejecucion (16x16, 32x32, ...) para poder medir su efecto sin
  * recompilar el kernel.
  */
-__global__ void matmul_ab_tiled(const float *a, const float *b, float *c,
-                                 int n, int m, int k, int block_size)
-{
+__global__ void matmul_ab_tiled(const float *a, const float *b, float *c, int n, int m, int k, int block_size) {
     extern __shared__ float shared_mem[];
     float *tile_a = shared_mem;
     float *tile_b = shared_mem + block_size * block_size;
@@ -297,9 +291,7 @@ __global__ void matmul_ab_tiled(const float *a, const float *b, float *c,
  * salida; no usa memoria compartida (la operacion no es el foco del
  * experimento de block_size, que se centra en el forward de la capa densa).
  */
-__global__ void matmul_atb(const float *a, const float *b, float *c,
-                            int n, int m, int k)
-{
+__global__ void matmul_atb(const float *a, const float *b, float *c, int n, int m, int k) {
     int row = blockIdx.y * blockDim.y + threadIdx.y; /* indice en m */
     int col = blockIdx.x * blockDim.x + threadIdx.x; /* indice en k */
 
@@ -312,9 +304,7 @@ __global__ void matmul_atb(const float *a, const float *b, float *c,
     }
 }
 
-__global__ void bias_relu_forward(const float *z, const float *bias, float *a,
-                                   int n, int h)
-{
+__global__ void bias_relu_forward(const float *z, const float *bias, float *a, int n, int h) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = n * h;
     if (idx < total) {
@@ -324,9 +314,7 @@ __global__ void bias_relu_forward(const float *z, const float *bias, float *a,
     }
 }
 
-__global__ void bias_sigmoid_forward(const float *z, const float *bias, float *y_hat,
-                                      int n)
-{
+__global__ void bias_sigmoid_forward(const float *z, const float *bias, float *y_hat, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
         float val = z[idx] + bias[0];
@@ -334,9 +322,7 @@ __global__ void bias_sigmoid_forward(const float *z, const float *bias, float *y
     }
 }
 
-__global__ void bce_loss_kernel(const float *y_hat, const float *y, float *loss_accum,
-                                 int n)
-{
+__global__ void bce_loss_kernel(const float *y_hat, const float *y, float *loss_accum, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
         const float eps = 1e-7f;
@@ -346,18 +332,14 @@ __global__ void bce_loss_kernel(const float *y_hat, const float *y, float *loss_
     }
 }
 
-__global__ void output_gradient_kernel(const float *y_hat, const float *y, float *d_z2,
-                                        int n)
-{
+__global__ void output_gradient_kernel(const float *y_hat, const float *y, float *d_z2, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
         d_z2[idx] = y_hat[idx] - y[idx];
     }
 }
 
-__global__ void hidden_gradient_kernel(const float *d_z2, const float *w2, const float *z1,
-                                        float *d_z1, int n, int h)
-{
+__global__ void hidden_gradient_kernel(const float *d_z2, const float *w2, const float *z1, float *d_z1, int n, int h) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = n * h;
     if (idx < total) {
@@ -368,8 +350,7 @@ __global__ void hidden_gradient_kernel(const float *d_z2, const float *w2, const
     }
 }
 
-__global__ void bias_gradient_kernel(const float *d_z, float *d_bias, int n, int dim)
-{
+__global__ void bias_gradient_kernel(const float *d_z, float *d_bias, int n, int dim) {
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     if (col < dim) {
         float acc = 0.0f;
@@ -380,9 +361,7 @@ __global__ void bias_gradient_kernel(const float *d_z, float *d_bias, int n, int
     }
 }
 
-__global__ void sgd_update_kernel(float *param, const float *grad, float lr, float inv_n,
-                                   int size)
-{
+__global__ void sgd_update_kernel(float *param, const float *grad, float lr, float inv_n, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         param[idx] -= lr * grad[idx] * inv_n;
@@ -393,26 +372,18 @@ __global__ void sgd_update_kernel(float *param, const float *grad, float lr, flo
 /* Forward pass (orquesta los kernels para un conjunto de N muestras)       */
 /* ------------------------------------------------------------------------ */
 
-static void forward_pass(const float *x_d, const float *w1_d, const float *b1_d,
-                          const float *w2_d, const float *b2_d,
-                          float *z1_d, float *a1_d, float *z2_d, float *y_hat_d,
-                          int n_samples, int input_dim, int hidden_units, int block_size)
-{
+void forward_pass(const float *x_d, const float *w1_d, const float *b1_d, const float *w2_d, const float *b2_d, float *z1_d, float *a1_d, float *z2_d, float *y_hat_d, int n_samples, int input_dim, int hidden_units, int block_size) {
     dim3 block_mm(block_size, block_size);
     size_t shared_bytes = 2 * (size_t)block_size * (size_t)block_size * sizeof(float);
 
-    dim3 grid_mm1((unsigned int)((hidden_units + block_size - 1) / block_size),
-                  (unsigned int)((n_samples + block_size - 1) / block_size));
-    matmul_ab_tiled<<<grid_mm1, block_mm, shared_bytes>>>(
-        x_d, w1_d, z1_d, n_samples, input_dim, hidden_units, block_size);
+    dim3 grid_mm1((unsigned int)((hidden_units + block_size - 1) / block_size), (unsigned int)((n_samples + block_size - 1) / block_size));
+    matmul_ab_tiled<<<grid_mm1, block_mm, shared_bytes>>>(x_d, w1_d, z1_d, n_samples, input_dim, hidden_units, block_size);
 
     int blocks_hidden = (n_samples * hidden_units + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     bias_relu_forward<<<blocks_hidden, THREADS_PER_BLOCK>>>(z1_d, b1_d, a1_d, n_samples, hidden_units);
 
-    dim3 grid_mm2((unsigned int)((1 + block_size - 1) / block_size),
-                  (unsigned int)((n_samples + block_size - 1) / block_size));
-    matmul_ab_tiled<<<grid_mm2, block_mm, shared_bytes>>>(
-        a1_d, w2_d, z2_d, n_samples, hidden_units, 1, block_size);
+    dim3 grid_mm2((unsigned int)((1 + block_size - 1) / block_size), (unsigned int)((n_samples + block_size - 1) / block_size));
+    matmul_ab_tiled<<<grid_mm2, block_mm, shared_bytes>>>(a1_d, w2_d, z2_d, n_samples, hidden_units, 1, block_size);
 
     int blocks_out = (n_samples + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     bias_sigmoid_forward<<<blocks_out, THREADS_PER_BLOCK>>>(z2_d, b2_d, y_hat_d, n_samples);
@@ -422,8 +393,7 @@ static void forward_pass(const float *x_d, const float *w1_d, const float *b1_d,
 /* Programa principal                                                       */
 /* ------------------------------------------------------------------------ */
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     if (argc != 8) {
         fprintf(stderr,
                 "Uso: %s <train_csv> <val_csv> <hidden_units> <learning_rate> "
