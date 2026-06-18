@@ -11,17 +11,18 @@ Código fuente en C del pipeline de preprocesamiento paralelizado con OpenMP.
 6. Aplanado a vector de 4096
 7. Exportación del dataset (CSV o binario)
 
-## Línea base serial (1 hilo)
+## Pipeline OpenMP
 
-`preprocess_serial.c` implementa el pipeline completo en C sin OpenMP para usarlo
-como referencia antes de paralelizar.
+`preprocess_serial.c` implementa el pipeline completo en C. El bucle principal que
+recorre las imágenes está paralelizado con OpenMP; para la línea base serial se
+ejecuta con `OMP_NUM_THREADS=1`.
 
 ### Compilar
 
 Desde `etapa1_openmp/`:
 
 ```bash
-gcc -Wall -Wextra -O2 -o preprocess_serial preprocess_serial.c -lm
+gcc -Wall -Wextra -O2 -fopenmp -o preprocess_serial preprocess_serial.c -lm
 ```
 
 ### Ejecutar
@@ -36,6 +37,12 @@ Con rutas explícitas:
 
 ```bash
 ./preprocess_serial ../dataset/raw ../dataset/procesado/dataset_serial.csv
+```
+
+En Windows PowerShell se puede fijar el número de hilos así:
+
+```powershell
+$env:OMP_NUM_THREADS="4"; .\preprocess_serial.exe ..\dataset\raw ..\dataset\procesado\dataset_openmp.csv
 ```
 
 La salida queda en `dataset/procesado/dataset_serial.csv` con este formato:

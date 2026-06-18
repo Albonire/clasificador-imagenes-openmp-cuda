@@ -1,8 +1,10 @@
 /*
- * Serial image preprocessing pipeline for Etapa 1.
+ * Image preprocessing pipeline for Etapa 1.
+ * Uses OpenMP to parallelize the image loop. Run with OMP_NUM_THREADS=1
+ * to measure the serial baseline.
  *
  * Compile:
- *   gcc -Wall -Wextra -O2 -o preprocess_serial preprocess_serial.c -lm
+ *   gcc -Wall -Wextra -O2 -fopenmp -o preprocess_serial preprocess_serial.c -lm
  *
  * Usage:
  *   ./preprocess_serial
@@ -20,6 +22,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <math.h>
+#include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -486,8 +489,9 @@ static int process_class_directory(FILE *csv, const char *raw_root, const char *
 {
     char *class_dir = join_path(raw_root, class_name);
     PathList paths = {0};
-    float pixels[OUTPUT_PIXELS];
-    size_t i;
+    size_t local_processed = 0;
+    int write_failed = 0;
+    long long image_count;
 
     if (class_dir == NULL) {
         return 0;
@@ -507,20 +511,45 @@ static int process_class_directory(FILE *csv, const char *raw_root, const char *
 
     printf("Class %s (label=%d): %zu images\n", class_name, label, paths.count);
 
-    for (i = 0; i < paths.count; i++) {
+    image_count = (long long)paths.count;
+
+#pragma omp parallel for schedule(dynamic) reduction(+ : local_processed)
+    for (long long i = 0; i < image_count; i++) {
+        float pixels[OUTPUT_PIXELS];
+        int row_written = 0;
+
         if (!preprocess_image(paths.items[i], pixels)) {
-            fprintf(stderr, "WARNING: skipping image '%s'\n", paths.items[i]);
+#pragma omp critical(stderr_write)
+            {
+                fprintf(stderr, "WARNING: skipping image '%s'\n", paths.items[i]);
+            }
             continue;
         }
 
-        if (!write_csv_row(csv, label, pixels)) {
-            fprintf(stderr, "ERROR: could not write CSV row for '%s'\n", paths.items[i]);
-            free(class_dir);
-            free_path_list(&paths);
-            return 0;
+#pragma omp critical(csv_write)
+        {
+            if (!write_failed) {
+                if (write_csv_row(csv, label, pixels)) {
+                    row_written = 1;
+                } else {
+                    fprintf(stderr, "ERROR: could not write CSV row for '%s'\n",
+                            paths.items[i]);
+                    write_failed = 1;
+                }
+            }
         }
 
-        (*processed_count)++;
+        if (row_written) {
+            local_processed++;
+        }
+    }
+
+    *processed_count += local_processed;
+
+    if (write_failed) {
+        free(class_dir);
+        free_path_list(&paths);
+        return 0;
     }
 
     free(class_dir);
@@ -534,6 +563,7 @@ int main(int argc, char *argv[])
     const char *output_csv;
     FILE *csv;
     size_t processed_count = 0;
+    int thread_count;
 
     if (argc != 1 && argc != 3) {
         fprintf(stderr, "Usage: %s [<raw_dataset_dir> <output_csv>]\n", argv[0]);
@@ -552,6 +582,8 @@ int main(int argc, char *argv[])
         raw_root = "dataset/raw";
         output_csv = "dataset/procesado/dataset_serial.csv";
     }
+
+    thread_count = omp_get_max_threads();
 
     csv = fopen(output_csv, "w");
     if (csv == NULL) {
@@ -579,5 +611,6 @@ int main(int argc, char *argv[])
     }
 
     printf("OK: processed %zu images into %s\n", processed_count, output_csv);
+    printf("Threads: %d\n", thread_count);
     return processed_count > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
