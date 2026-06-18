@@ -564,6 +564,9 @@ int main(int argc, char *argv[])
     FILE *csv;
     size_t processed_count = 0;
     int thread_count;
+    double start_time;
+    double end_time;
+    double elapsed_time;
 
     if (argc != 1 && argc != 3) {
         fprintf(stderr, "Usage: %s [<raw_dataset_dir> <output_csv>]\n", argv[0]);
@@ -584,6 +587,7 @@ int main(int argc, char *argv[])
     }
 
     thread_count = omp_get_max_threads();
+    start_time = omp_get_wtime();
 
     csv = fopen(output_csv, "w");
     if (csv == NULL) {
@@ -610,7 +614,11 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    end_time = omp_get_wtime();
+    elapsed_time = end_time - start_time;
+
     printf("OK: processed %zu images into %s\n", processed_count, output_csv);
     printf("Threads: %d\n", thread_count);
+    printf("Total time: %.6f seconds\n", elapsed_time);
     return processed_count > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -59,3 +59,12 @@ Etiquetas usadas:
 - Tiempo en serie (1 hilo) — línea base
 - Tiempo con OpenMP: 2, 4, 8... hilos
 - Speedup = tiempo_serial / tiempo_paralelo
+
+Resultados medidos con `3312` imágenes:
+
+| Hilos | Tiempo (s) | Speedup |
+|------:|-----------:|--------:|
+| 1 | 31.712 | 1.00 |
+| 2 | 35.153 | 0.90 |
+| 4 | 14.204 | 2.23 |
+| 8 | 13.912 | 2.28 |
