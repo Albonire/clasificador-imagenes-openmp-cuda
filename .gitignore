@@ -18,6 +18,10 @@ venv/
 # CUDA
 *.cubin
 *.ptx
+etapa2_cuda/gpu_model/train_gpu
+etapa2_cuda/cpu_baseline/train_cpu
+etapa2_cuda/gpu_model/_tmp_*
+etapa2_cuda/cpu_baseline/_tmp_*
 
 # Models
 modelo/*.bin
