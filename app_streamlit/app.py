@@ -1,9 +1,9 @@
-
-import streamlit as st
-import numpy as np
-from PIL import Image, ImageOps, UnidentifiedImageError
 import os
 
+import cv2
+import numpy as np
+import streamlit as st
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 # Constantes
 
@@ -128,6 +128,7 @@ CSS = f"""
 # Carga de pesos
 # ===========================================================================
 
+
 @st.cache_resource
 def load_weights(path):
     """Carga los pesos entrenados desde archivo npz."""
@@ -138,8 +139,82 @@ def load_weights(path):
 
 
 # ===========================================================================
+# Deteccion y recorte de la region ocular (Haar cascades de OpenCV)
+# ===========================================================================
+#
+# El dataset de entrenamiento son recortes pequenos de la region del ojo
+# (~78x78 px). Para que la inferencia reciba una entrada parecida, se detecta
+# el rostro y los ojos y se recorta un solo ojo en formato cuadrado antes de
+# alimentar el pipeline gris -> Sobel -> Gauss -> 64x64.
+
+
+@st.cache_resource
+def load_eye_detectors():
+    """Carga las cascadas Haar de rostro y ojos incluidas en opencv-python."""
+    face = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
+    eye = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
+    return face, eye
+
+
+def detect_eye_crop(pil_img, padding=0.30):
+    """Detecta el ojo mas grande y devuelve un recorte cuadrado.
+
+    Estrategia: primero busca el rostro frontal; dentro de su mitad superior
+    busca los ojos (reduce falsos positivos). Si no hay rostro, busca ojos en
+    toda la imagen como respaldo.
+
+    Returns:
+        (crop, status) donde crop es un PIL.Image (o None si no se detecto) y
+        status es "ojo", "rostro_sin_ojos" o "sin_deteccion".
+    """
+    face_cascade, eye_cascade = load_eye_detectors()
+    rgb = np.array(pil_img.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    h_img, w_img = gray.shape
+
+    faces = face_cascade.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+    )
+
+    face_found = len(faces) > 0
+    if face_found:
+        fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+        roi_y1 = fy + int(fh * 0.6)  # los ojos estan en la mitad superior
+        roi = gray[fy:roi_y1, fx : fx + fw]
+        detected = eye_cascade.detectMultiScale(
+            roi, scaleFactor=1.1, minNeighbors=6, minSize=(20, 20)
+        )
+        eyes = [(fx + ex, fy + ey, ew, eh) for (ex, ey, ew, eh) in detected]
+    else:
+        detected = eye_cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=6, minSize=(20, 20)
+        )
+        eyes = list(detected)
+
+    if len(eyes) == 0:
+        return None, "rostro_sin_ojos" if face_found else "sin_deteccion"
+
+    ex, ey, ew, eh = max(eyes, key=lambda e: e[2] * e[3])
+    cx, cy = ex + ew / 2.0, ey + eh / 2.0
+    side = max(ew, eh) * (1.0 + padding)
+    x0 = max(0, int(round(cx - side / 2.0)))
+    y0 = max(0, int(round(cy - side / 2.0)))
+    x1 = min(w_img, int(round(cx + side / 2.0)))
+    y1 = min(h_img, int(round(cy + side / 2.0)))
+
+    if x1 <= x0 or y1 <= y0:
+        return None, "sin_deteccion"
+
+    crop = pil_img.convert("RGB").crop((x0, y0, x1, y1))
+    return crop, "ojo"
+
+
+# ===========================================================================
 # Preprocesamiento (replica exacta de preprocess_serial.c)
 # ===========================================================================
+
 
 def apply_sobel(img):
     """Operador Sobel 3x3 con replicate padding y clamp a [0, 255]."""
@@ -253,21 +328,31 @@ def predict(features, weights):
 # Metricas de calidad de imagen
 # ===========================================================================
 
+
 def calculate_brightness(rgb_array):
     """Brillo promedio (0-255)."""
-    gray = GRAY_R * rgb_array[:, :, 0] + GRAY_G * rgb_array[:, :, 1] + GRAY_B * rgb_array[:, :, 2]
+    gray = (
+        GRAY_R * rgb_array[:, :, 0]
+        + GRAY_G * rgb_array[:, :, 1]
+        + GRAY_B * rgb_array[:, :, 2]
+    )
     return float(np.mean(gray))
 
 
 def calculate_contrast(rgb_array):
     """Contraste como desviacion estandar de la luminancia."""
-    gray = GRAY_R * rgb_array[:, :, 0] + GRAY_G * rgb_array[:, :, 1] + GRAY_B * rgb_array[:, :, 2]
+    gray = (
+        GRAY_R * rgb_array[:, :, 0]
+        + GRAY_G * rgb_array[:, :, 1]
+        + GRAY_B * rgb_array[:, :, 2]
+    )
     return float(np.std(gray))
 
 
 # ===========================================================================
 # Interfaz principal
 # ===========================================================================
+
 
 def main():
     st.set_page_config(
@@ -384,22 +469,33 @@ def main():
 
     zoom = 1.0
     img_input = None
+    infer_img = None
+    detection_status = None
 
     col_img, col_res = st.columns(2)
 
     with col_img:
         if fuente == "Subir archivo":
-            uploaded = st.file_uploader("Seleccione una imagen JPG/PNG", type=["jpg", "jpeg", "png"], help="Formatos soportados: JPG, JPEG, PNG")
+            uploaded = st.file_uploader(
+                "Seleccione una imagen JPG/PNG",
+                type=["jpg", "jpeg", "png"],
+                help="Formatos soportados: JPG, JPEG, PNG",
+            )
             if uploaded:
                 try:
                     img_input = Image.open(uploaded)
                 except (UnidentifiedImageError, OSError):
-                    st.error("El archivo seleccionado no es una imagen válida o está corrupto.")
+                    st.error(
+                        "El archivo seleccionado no es una imagen válida o está corrupto."
+                    )
                     img_input = None
         else:
             zoom = st.slider(
                 "Zoom digital (ajuste para encuadrar los ojos)",
-                1.0, 3.0, 1.0, 0.1,
+                1.0,
+                3.0,
+                1.0,
+                0.1,
                 help="Ajuste el zoom para que los ojos ocupen la mayor parte del encuadre",
             )
             st.caption(
@@ -421,12 +517,17 @@ def main():
                     """,
                     unsafe_allow_html=True,
                 )
-            foto = st.camera_input("Capture una foto", help="Asegurese de que el rostro este centrado y bien iluminado")
+            foto = st.camera_input(
+                "Capture una foto",
+                help="Asegurese de que el rostro este centrado y bien iluminado",
+            )
             if foto:
                 try:
                     img_input = Image.open(foto)
                 except OSError:
-                    st.error("Error al procesar la captura de la cámara. Intente nuevamente.")
+                    st.error(
+                        "Error al procesar la captura de la cámara. Intente nuevamente."
+                    )
                     img_input = None
 
         if img_input:
@@ -440,38 +541,69 @@ def main():
                 img_input = img_input.crop((left, top_, left + new_w, top_ + new_h))
             st.image(img_input, use_container_width=True)
 
+            # Deteccion automatica de la region ocular
+            eye_crop, detection_status = detect_eye_crop(img_input)
+            if detection_status == "ojo":
+                infer_img = eye_crop
+                st.success("Region ocular detectada automaticamente.")
+                st.image(eye_crop, caption="Recorte enviado al modelo", width=180)
+            elif detection_status == "rostro_sin_ojos":
+                infer_img = img_input
+                st.markdown(
+                    '<div class="alert-warning">'
+                    "<strong>Rostro detectado, pero no los ojos.</strong> Se usara la "
+                    "imagen completa (menos preciso). Acerquese y mire de frente."
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                infer_img = img_input
+                st.markdown(
+                    '<div class="alert-warning">'
+                    "<strong>No se detecto rostro ni ojos.</strong> Se usara la imagen "
+                    "completa (menos preciso). Mejore el encuadre y la iluminacion."
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
     with col_res:
         if img_input:
             try:
-                features, sobel_img, final_img = preprocess_image(img_input)
+                features, sobel_img, final_img = preprocess_image(infer_img)
                 prob, clase = predict(features, weights)
             except (ValueError, IndexError, MemoryError):
-                st.error("Error al preprocesar la imagen. Verifique que la imagen tenga contenido válido.")
+                st.error(
+                    "Error al preprocesar la imagen. Verifique que la imagen tenga contenido válido."
+                )
                 img_input = None
 
             if img_input:
                 color_resultado = COLOR_EXITO if clase == 0 else COLOR_ERROR
-                texto_resultado = "SIN SOMNOLENCIA" if clase == 0 else "SOMNOLENCIA DETECTADA"
+                texto_resultado = (
+                    "SIN SOMNOLENCIA" if clase == 0 else "SOMNOLENCIA DETECTADA"
+                )
                 confianza = prob if clase == 1 else (1 - prob)
 
                 st.markdown(
                     f'<div class="resultado-card">'
                     f'<div class="resultado-titulo">RESULTADO DEL ANALISIS</div>'
                     f'<div class="resultado-clase" style="color: {color_resultado};">'
-                    f'{texto_resultado}</div>'
-                    f'<div class="resultado-confianza">Confianza: {confianza*100:.1f}%</div>'
-                    f'</div>',
+                    f"{texto_resultado}</div>"
+                    f'<div class="resultado-confianza">Confianza: {confianza * 100:.1f}%</div>'
+                    f"</div>",
                     unsafe_allow_html=True,
                 )
 
                 col_p1, col_p2 = st.columns(2)
-                col_p1.metric("Ojos Abiertos", f"{(1-prob)*100:.1f}%")
-                col_p2.metric("Ojos Cerrados", f"{prob*100:.1f}%")
+                col_p1.metric("Ojos Abiertos", f"{(1 - prob) * 100:.1f}%")
+                col_p2.metric("Ojos Cerrados", f"{prob * 100:.1f}%")
 
-                st.progress(confianza, text=f"Confianza del modelo: {confianza*100:.1f}%")
+                st.progress(
+                    confianza, text=f"Confianza del modelo: {confianza * 100:.1f}%"
+                )
 
-                # Validaciones de calidad
-                rgb_array = np.array(img_input.convert("RGB"), dtype=np.float32)
+                # Validaciones de calidad (sobre el recorte que ve el modelo)
+                rgb_array = np.array(infer_img.convert("RGB"), dtype=np.float32)
                 brightness = calculate_brightness(rgb_array)
                 contrast = calculate_contrast(rgb_array)
 
@@ -489,7 +621,9 @@ def main():
                         )
                 with col_v2:
                     delta_c = "Bajo" if contrast < 30 else "Normal"
-                    st.metric("Contraste (Desv. Est.)", f"{contrast:.1f}", delta=delta_c)
+                    st.metric(
+                        "Contraste (Desv. Est.)", f"{contrast:.1f}", delta=delta_c
+                    )
                     if contrast < 30:
                         st.markdown(
                             '<div class="alert-warning">'
@@ -509,8 +643,13 @@ def main():
         st.markdown("### Proceso de Analisis")
 
         # Preparar imagenes para visualizacion (solo visual, no modifica pipeline)
-        rgb_array = np.array(img_input.convert("RGB"), dtype=np.float32)
-        gray_vis = (GRAY_R * rgb_array[:, :, 0] + GRAY_G * rgb_array[:, :, 1] + GRAY_B * rgb_array[:, :, 2]).astype(np.uint8)
+        # La cadena gris -> Sobel -> final se deriva del recorte que ve el modelo.
+        rgb_array = np.array(infer_img.convert("RGB"), dtype=np.float32)
+        gray_vis = (
+            GRAY_R * rgb_array[:, :, 0]
+            + GRAY_G * rgb_array[:, :, 1]
+            + GRAY_B * rgb_array[:, :, 2]
+        ).astype(np.uint8)
         sobel_vis = np.clip(sobel_img, 0, 255).astype(np.uint8)
         final_vis = (np.clip(final_img, 0, 1) * 255).astype(np.uint8)
 
@@ -526,8 +665,12 @@ def main():
             '<div class="processing-col"><h4>Original</h4></div>',
             unsafe_allow_html=True,
         )
-        cols[0].image(img_input, use_container_width=True)
-        cols[0].caption("Fotografia capturada por el usuario")
+        cols[0].image(infer_img, use_container_width=True)
+        cols[0].caption(
+            "Region ocular detectada"
+            if detection_status == "ojo"
+            else "Imagen completa (sin deteccion)"
+        )
 
         cols[1].markdown(
             '<div class="processing-col"><h4>Escala de Grises</h4></div>',
