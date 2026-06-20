@@ -1,0 +1,37 @@
+# Datos y artefactos pesados que no se necesitan en la imagen de runtime
+dataset/
+notebooks/
+etapa1_openmp/
+etapa2_cuda/
+reporte/
+docs/
+
+# Entorno y cachés locales
+.venv/
+.git/
+.gitignore
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.python-version
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Sistema operativo / editores
+.DS_Store
+.vscode/
+.idea/
+
+# Scripts y entrypoints no usados por la app
+main.py
+
+# Documentación (no necesaria en runtime)
+*.md
+!modelo/README.md
+
+# El propio contexto de Docker
+Dockerfile
+.dockerignore
+docker-compose.yml

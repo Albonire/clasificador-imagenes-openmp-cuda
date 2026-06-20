@@ -1,0 +1,18 @@
+# Configuración de Streamlit para producción.
+# Los ajustes de servidor (puerto/dirección) se fijan vía variables de entorno
+# en el Dockerfile para que la plataforma de despliegue pueda sobreescribirlos.
+
+[server]
+# Las imágenes de rostro son pequeñas; 10 MB es más que suficiente.
+maxUploadSize = 10
+# Protección XSRF activa (valor por defecto seguro detrás de un proxy HTTPS).
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#ad3333"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8f9fa"
+textColor = "#003366"
