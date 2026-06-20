@@ -1,6 +1,5 @@
 import os
-
-import cv2
+import cv2 as cv2
 import numpy as np
 import streamlit as st
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -100,9 +99,9 @@ CSS = f"""
     .factor-card {{
         background: #f0f4ff; border-left: 4px solid {COLOR_AZUL};
         border-radius: 8px; padding: 12px 16px; margin: 8px 0;
-        font-size: 14px; line-height: 1.6;
+        font-size: 14px; line-height: 1.6; color: #000000;
     }}
-    .factor-card b {{ color: {COLOR_AZUL}; }}
+    .factor-card b {{ color: #000000; }}
 
     section[data-testid="stSidebar"] > div:first-child {{
         background: linear-gradient(180deg, {COLOR_AZUL} 0%, #002244 100%);
@@ -370,35 +369,20 @@ def main():
     with st.sidebar:
         st.markdown("### Modelo")
         st.markdown(
-            '<div class="modelo-status" style="border-left-color: ' + COLOR_AZUL + ';">'
+            '<div class="modelo-status" style="border-left-color: ' + COLOR_AZUL + '; color: #000000;">'
+            "<b>Estado:</b> Modelo cargado correctamente<br>"
+            "<b>Archivo:</b> weights.npz <br>"
+            "<b>Ubicacion:</b> /modelo/<br>"
             "<b>Arquitectura:</b> 4096 &rarr; 75 &rarr; 1<br>"
             "<b>Parametros:</b> 307,351<br>"
             "<b>Accuracy:</b> 85.27%"
             "</div>",
             unsafe_allow_html=True,
         )
-
-        st.markdown("---")
-        st.markdown("### Flujo del Sistema")
-        flow_html = """
-        <div class="flow-step">1. Captura o subida de imagen</div>
-        <div class="flow-arrow">|</div>
-        <div class="flow-step">2. Escala de grises</div>
-        <div class="flow-arrow">|</div>
-        <div class="flow-step">3. Sobel + Gaussiano</div>
-        <div class="flow-arrow">|</div>
-        <div class="flow-step">4. Resize 64x64</div>
-        <div class="flow-arrow">|</div>
-        <div class="flow-step">5. Forward NumPy</div>
-        <div class="flow-arrow">|</div>
-        <div class="flow-step">6. Prediccion</div>
-        """
-        st.markdown(flow_html, unsafe_allow_html=True)
-
         st.markdown("---")
         st.markdown("### Guia de Encuadre")
         st.markdown(
-            '<div class="modelo-status" style="border-left-color: ' + COLOR_AZUL + ';">'
+            '<div class="modelo-status" style="border-left-color: ' + COLOR_AZUL + '; color: #000000;">'
             "<b>Posicion:</b> Rostro centrado y frontal a la camara<br>"
             "<b>Distancia:</b> 20-30 cm<br>"
             "<b>Iluminacion:</b> Luz frontal uniforme<br>"
@@ -448,16 +432,6 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Tarjeta compacta de estado del modelo
-    st.markdown(
-        '<div class="modelo-status">'
-        "<b>Estado:</b> Modelo cargado correctamente<br>"
-        "<b>Archivo:</b> weights.npz<br>"
-        "<b>Ubicacion:</b> /modelo/"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
     # ===================================================================
     # FUENTE DE IMAGEN | RESULTADO
     # ===================================================================
@@ -470,6 +444,8 @@ def main():
     zoom = 1.0
     img_input = None
     infer_img = None
+    sobel_img = None
+    final_img = None
     detection_status = None
 
     col_img, col_res = st.columns(2)
@@ -585,7 +561,7 @@ def main():
                 confianza = prob if clase == 1 else (1 - prob)
 
                 st.markdown(
-                    f'<div class="resultado-card">'
+                    f'<div class="resultado-card" style="color: #000000;">'
                     f'<div class="resultado-titulo">RESULTADO DEL ANALISIS</div>'
                     f'<div class="resultado-clase" style="color: {color_resultado};">'
                     f"{texto_resultado}</div>"
@@ -640,78 +616,69 @@ def main():
     # ===================================================================
     if img_input:
         st.markdown("---")
-        st.markdown("### Proceso de Analisis")
+        with st.expander("Como funciona el Proceso de Analisis?"):
+            # Preparar imagenes para visualizacion (solo visual, no modifica pipeline)
+            # La cadena gris -> Sobel -> final se deriva del recorte que ve el modelo.
+            rgb_array = np.array(infer_img.convert("RGB"), dtype=np.float32)
+            gray_vis = (
+                GRAY_R * rgb_array[:, :, 0]
+                + GRAY_G * rgb_array[:, :, 1]
+                + GRAY_B * rgb_array[:, :, 2]
+            ).astype(np.uint8)
+            sobel_vis = np.clip(sobel_img, 0, 255).astype(np.uint8)
+            final_vis = (np.clip(final_img, 0, 1) * 255).astype(np.uint8)
 
-        # Preparar imagenes para visualizacion (solo visual, no modifica pipeline)
-        # La cadena gris -> Sobel -> final se deriva del recorte que ve el modelo.
-        rgb_array = np.array(infer_img.convert("RGB"), dtype=np.float32)
-        gray_vis = (
-            GRAY_R * rgb_array[:, :, 0]
-            + GRAY_G * rgb_array[:, :, 1]
-            + GRAY_B * rgb_array[:, :, 2]
-        ).astype(np.uint8)
-        sobel_vis = np.clip(sobel_img, 0, 255).astype(np.uint8)
-        final_vis = (np.clip(final_img, 0, 1) * 255).astype(np.uint8)
+            st.markdown(
+                '<div class="pipeline-flow">'
+                "Original &rarr; Escala de Grises &rarr; Sobel &rarr; Imagen Final 64x64"
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
-        st.markdown(
-            '<div class="pipeline-flow">'
-            "Original &rarr; Escala de Grises &rarr; Sobel &rarr; Imagen Final 64x64"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+            cols = st.columns(4, gap="small")
+            cols[0].markdown(
+                '<div class="processing-col"><h4>Original</h4></div>',
+                unsafe_allow_html=True,
+            )
+            cols[0].image(infer_img, use_container_width=True)
+            cols[0].caption(
+                "Region ocular detectada"
+                if detection_status == "ojo"
+                else "Imagen completa (sin deteccion)"
+            )
 
-        cols = st.columns(4, gap="small")
-        cols[0].markdown(
-            '<div class="processing-col"><h4>Original</h4></div>',
-            unsafe_allow_html=True,
-        )
-        cols[0].image(infer_img, use_container_width=True)
-        cols[0].caption(
-            "Region ocular detectada"
-            if detection_status == "ojo"
-            else "Imagen completa (sin deteccion)"
-        )
+            cols[1].markdown(
+                '<div class="processing-col"><h4>Escala de Grises</h4></div>',
+                unsafe_allow_html=True,
+            )
+            cols[1].image(gray_vis, use_container_width=True, clamp=True)
+            cols[1].caption("Elimina la informacion de color")
 
-        cols[1].markdown(
-            '<div class="processing-col"><h4>Escala de Grises</h4></div>',
-            unsafe_allow_html=True,
-        )
-        cols[1].image(gray_vis, use_container_width=True, clamp=True)
-        cols[1].caption("Elimina la informacion de color")
+            cols[2].markdown(
+                '<div class="processing-col"><h4>Deteccion de Bordes</h4></div>',
+                unsafe_allow_html=True,
+            )
+            cols[2].image(sobel_vis, use_container_width=True, clamp=True)
+            cols[2].caption("Resalta contornos de parpados y pestanas")
 
-        cols[2].markdown(
-            '<div class="processing-col"><h4>Deteccion de Bordes</h4></div>',
-            unsafe_allow_html=True,
-        )
-        cols[2].image(sobel_vis, use_container_width=True, clamp=True)
-        cols[2].caption("Resalta contornos de parpados y pestanas")
+            cols[3].markdown(
+                '<div class="processing-col"><h4>Final 64x64</h4></div>',
+                unsafe_allow_html=True,
+            )
+            cols[3].image(final_vis, use_container_width=True, clamp=True)
+            cols[3].caption(f"Entrada de la red neuronal ({TARGET_SIZE}x{TARGET_SIZE})")
 
-        cols[3].markdown(
-            '<div class="processing-col"><h4>Final 64x64</h4></div>',
-            unsafe_allow_html=True,
-        )
-        cols[3].image(final_vis, use_container_width=True, clamp=True)
-        cols[3].caption(f"Entrada de la red neuronal ({TARGET_SIZE}x{TARGET_SIZE})")
-
-        st.info(
-            "La imagen es convertida a escala de grises, posteriormente el filtro Sobel "
-            "detecta los bordes principales de los ojos. Luego, un filtro Gaussiano reduce "
-            "el ruido y finalmente la imagen se redimensiona a 64x64 pixeles para ser "
-            "procesada por la red neuronal."
-        )
+            st.info(
+                "La imagen es convertida a escala de grises, posteriormente el filtro Sobel "
+                "detecta los bordes principales de los ojos. Luego, un filtro Gaussiano reduce "
+                "el ruido y finalmente la imagen se redimensiona a 64x64 pixeles para ser "
+                "procesada por la red neuronal."
+            )
 
     # ===================================================================
     # INFORMACION DEL MODELO
     # ===================================================================
     if img_input:
-        st.markdown("---")
-        st.markdown("### Informacion del Modelo")
-
-        col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric("Arquitectura", "4096 -> 75 -> 1")
-        col_m2.metric("Parametros", "307,351")
-        col_m3.metric("Accuracy", "85.27%")
-
         st.info(
             "Entrenamiento: CUDA (Tesla T4). "
             "Preprocesamiento: OpenMP + Sobel + Gaussiano. "
@@ -751,8 +718,7 @@ def main():
             """
             )
 
-        if st.button("Nueva Captura", use_container_width=True):
-            st.rerun()
+        
 
     # ===================================================================
     # FOOTER
