@@ -218,6 +218,19 @@ def preprocess_image(pil_img):
 # Forward pass (NumPy puro, coincide con train_gpu.cu y modelo/README.md)
 # ===========================================================================
 
+
+def sigmoid(x):
+    """Sigmoide numericamente estable (evita overflow de exp con x muy negativo).
+
+    Identica a 1/(1+exp(-x)) pero reformulada por ramas para no desbordar:
+    para x>=0 se usa exp(-x) en (0,1]; para x<0, exp(x)/(1+exp(x)).
+    """
+    if x >= 0.0:
+        return 1.0 / (1.0 + np.exp(-x))
+    exp_x = np.exp(x)
+    return exp_x / (1.0 + exp_x)
+
+
 def predict(features, weights):
     """Forward pass: capa oculta ReLU + salida sigmoide.
 
@@ -232,7 +245,7 @@ def predict(features, weights):
     z1 = weights["W1"] @ features + weights["b1"]
     a1 = np.maximum(z1, 0)
     z2 = weights["W2"] @ a1 + weights["b2"]
-    prob = 1.0 / (1.0 + np.exp(-z2[0]))
+    prob = sigmoid(float(z2[0]))
     return float(prob), 1 if prob >= 0.5 else 0
 
 
