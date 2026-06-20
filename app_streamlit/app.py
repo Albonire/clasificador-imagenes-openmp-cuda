@@ -167,25 +167,34 @@ def apply_gaussian(img):
 
 
 def resize_bilinear(src, new_w, new_h):
-    """Redimensionamiento bilineal edge-aligned (align_corners=True)."""
+    """Redimensionamiento bilineal edge-aligned (align_corners=True).
+
+    Version vectorizada con NumPy; produce el mismo resultado que el bucle por
+    pixel (mismos ratios, floor por truncamiento y mezcla bilineal), pero sin
+    los ~4096 pasos en Python puro.
+    """
     h, w = src.shape
     x_ratio = (w - 1) / (new_w - 1) if new_w > 1 else 0.0
     y_ratio = (h - 1) / (new_h - 1) if new_h > 1 else 0.0
-    dst = np.empty((new_h, new_w), dtype=np.float32)
-    for y in range(new_h):
-        src_y = y * y_ratio
-        y0 = int(src_y)
-        y1 = min(y0 + 1, h - 1)
-        yw = src_y - y0
-        for x in range(new_w):
-            src_x = x * x_ratio
-            x0 = int(src_x)
-            x1 = min(x0 + 1, w - 1)
-            xw = src_x - x0
-            top = src[y0, x0] + (src[y0, x1] - src[y0, x0]) * xw
-            bottom = src[y1, x0] + (src[y1, x1] - src[y1, x0]) * xw
-            dst[y, x] = top + (bottom - top) * yw
-    return dst
+
+    src_x = np.arange(new_w) * x_ratio  # float64, igual que en el bucle
+    src_y = np.arange(new_h) * y_ratio
+    x0 = src_x.astype(np.intp)  # truncamiento == floor (coords no negativas)
+    y0 = src_y.astype(np.intp)
+    x1 = np.minimum(x0 + 1, w - 1)
+    y1 = np.minimum(y0 + 1, h - 1)
+    xw = (src_x - x0)[np.newaxis, :]  # pesos: (1, new_w)
+    yw = (src_y - y0)[:, np.newaxis]  # pesos: (new_h, 1)
+
+    # Recolecta las 4 esquinas como mallas (new_h, new_w)
+    top_left = src[np.ix_(y0, x0)]
+    top_right = src[np.ix_(y0, x1)]
+    bottom_left = src[np.ix_(y1, x0)]
+    bottom_right = src[np.ix_(y1, x1)]
+
+    top = top_left + (top_right - top_left) * xw
+    bottom = bottom_left + (bottom_right - bottom_left) * xw
+    return (top + (bottom - top) * yw).astype(np.float32)
 
 
 def preprocess_image(pil_img):
