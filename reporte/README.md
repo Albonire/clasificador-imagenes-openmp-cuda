@@ -1,3 +1,14 @@
 # Reporte
 
-Reporte final en Markdown o PDF con análisis del pipeline, speedups, métricas y conclusiones.
+Reporte final en Markdown o PDF con analisis del pipeline, speedups, metricas y conclusiones.
+
+## Documentos CRISP-DM
+
+- `CRISP-DM Phase 1.md` - Business Understanding.
+- `CRISP-DM Phase 2.md` - Data Understanding.
+- `CRISP-DM Phase 3.md` - Data Preparation.
+- `CRISP-DM Phase 5.md` - Evaluacion, metricas, matriz de confusion y reflexiones.
+
+## Evidencias
+
+Las evidencias principales se encuentran en `reporte/evidencias/`, incluyendo curvas de perdida, matriz de confusion y metricas finales del test set.
