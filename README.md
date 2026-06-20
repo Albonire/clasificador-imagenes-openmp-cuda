@@ -85,3 +85,19 @@ Usa `modelo/weights.npz` y debe aplicar el **mismo preprocesamiento** que
 
 Documentación CRISP-DM completa (Fases 1 a 6) en `reporte/`, con evidencias en
 `reporte/evidencias/`.
+
+### 5. Metricas finales sobre test set
+
+```bash
+python scripts/evaluate_final_metrics.py
+```
+
+El script evalua `modelo/weights.npz` contra `dataset/procesado/test.csv` y
+genera exactitud, precision, recall, F1, loss BCE, matriz de confusion,
+predicciones por muestra y un resumen Markdown en
+`reporte/evidencias/final_metrics.md`.
+
+Las curvas de perdida del entrenamiento estan en:
+
+- `reporte/evidencias/gpu_training_curves.png`
+- `reporte/evidencias/cpu_baseline_training_curves.png`
