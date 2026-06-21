@@ -12,7 +12,9 @@ enableXsrfProtection = true
 gatherUsageStats = false
 
 [theme]
-primaryColor = "#ad3333"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f8f9fa"
-textColor = "#003366"
+# Paleta "moderna neutra" (ver app_streamlit/ui/theme.py para los tokens
+# completos): un acento discreto en vez del rojo/azul institucional.
+primaryColor = "#4F46E5"
+backgroundColor = "#FAFAFA"
+secondaryBackgroundColor = "#F4F4F5"
+textColor = "#18181B"
