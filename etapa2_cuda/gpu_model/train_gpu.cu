@@ -14,22 +14,43 @@
  *   6. output_gradient_kernel -> dZ2 = y_hat - y
  *   7. hidden_gradient_kernel -> dZ1 = (dZ2 @ W2^T) * relu'(Z1)
  *   8. bias_gradient_kernel   -> db = suma sobre N de dZ
- *   9. sgd_update_kernel      -> actualizacion de pesos
+ *   9. sgd_update_kernel      -> actualizacion de pesos con momentum + L2 opcionales
+ *                                (ver "Flags opcionales" abajo; con los valores
+ *                                por defecto reproduce el SGD simple original)
  *
  * Compilar (Colab, runtime con GPU):
  *   nvcc -O3 -o train_gpu train_gpu.cu
  *
  * Uso:
- *   ./train_gpu <train_csv> <val_csv> <hidden_units> <learning_rate> <epochs> <block_size> <weights_out>
+ *   ./train_gpu <train_csv> <val_csv> <hidden_units> <learning_rate> <epochs> <block_size> <weights_out> [flags...]
  *
- * Ejemplo:
+ * Ejemplo (comportamiento original, sin cambios):
  *   ./train_gpu ../../dataset/procesado/train.csv ../../dataset/procesado/val.csv 128 0.1 50 32 weights_gpu.bin
+ *
+ * Flags opcionales (todas aditivas; sin ninguna, el entrenamiento es
+ * identico al original -- ver etapa2_cuda/gpu_model/TRAINING_IMPROVEMENTS.md
+ * para la justificacion de cada una):
+ *   --momentum=M     velocidad de SGD con momentum (default 0.0 = SGD simple)
+ *   --l2=LAMBDA      weight decay L2 (default 0.0 = sin regularizacion)
+ *   --init=he|glorot inicializacion de W1 (default glorot, el actual)
+ *   --save-best      guarda los pesos de la epoca con menor val_loss, no los
+ *                     de la ultima epoca (default: comportamiento actual)
+ *   --lr-decay=G     multiplica la tasa de aprendizaje por G cada epoca
+ *                     (default 1.0 = sin decaimiento)
+ *
+ * Ejemplo (con mejoras, ver checklist en TRAINING_IMPROVEMENTS.md):
+ *   ./train_gpu train.csv val.csv 75 0.1 50 32 weights_gpu.bin \
+ *       --momentum=0.9 --l2=0.0001 --init=he --save-best
  *
  * Formato de salida en stdout (pensado para ser parseado desde el notebook orquestador):
  *   INFO,<clave>,<valor>
  *   TRANSFER,<segundos_host_a_device>
  *   EPOCH,<epoca>,<train_loss>,<val_loss>,<val_accuracy>
  *   SUMMARY,<hidden_units>,<learning_rate>,<epochs>,<block_size>,<train_loop_seconds>,<h2d_seconds>,<final_train_loss>,<final_val_loss>,<final_val_accuracy>
+ *
+ * El parser de model-gpu.ipynb lee INFO/EPOCH/SUMMARY por posicion y le sobran
+ * columnas extra, asi que agregar lineas INFO nuevas (p.ej. best_epoch) es
+ * seguro y no rompe la busqueda de hiperparametros existente.
  *
  * Formato del archivo de pesos (binario, leido luego con numpy.fromfile):
  *   int32  input_dim
@@ -50,6 +71,7 @@
 #include <math.h>
 #include <time.h>
 #include <stdint.h>
+#include <float.h>
 
 #include <cuda_runtime.h>
 
@@ -211,6 +233,19 @@ void init_glorot_uniform(float *data, int fan_in, int fan_out) {
     }
 }
 
+/*
+ * He uniform: igual forma que Glorot pero el limite solo depende de fan_in,
+ * pensado para capas seguidas de ReLU (nuestra capa oculta). Alternativa
+ * opt-in vía --init=he; el default sigue siendo Glorot (comportamiento actual).
+ */
+void init_he_uniform(float *data, int fan_in, int fan_out) {
+    float limit = sqrtf(6.0f / (float)fan_in);
+    size_t total = (size_t)fan_in * (size_t)fan_out;
+    for (size_t i = 0; i < total; i++) {
+        data[i] = rand_uniform(limit);
+    }
+}
+
 /* ------------------------------------------------------------------------ */
 /* Utilidades de tiempo y de E/S de pesos                                   */
 /* ------------------------------------------------------------------------ */
@@ -361,10 +396,28 @@ __global__ void bias_gradient_kernel(const float *d_z, float *d_bias, int n, int
     }
 }
 
-__global__ void sgd_update_kernel(float *param, const float *grad, float lr, float inv_n, int size) {
+/*
+ * Actualizacion de pesos con momentum y weight decay (L2) opcionales:
+ *   grad_total = grad * inv_n + l2 * param         (weight decay)
+ *   velocity   = momentum * velocity + grad_total  (momentum, 0 = sin inercia)
+ *   param     -= lr * velocity
+ *
+ * Con momentum=0 y l2=0 (los defaults), l2*param y momentum*velocity se
+ * multiplican por cero exacto y se anulan (suma/resta de 0.0f es exacta en
+ * IEEE754), asi que el valor es matematicamente el mismo SGD simple de
+ * antes. El orden de las multiplicaciones cambia (antes "(lr*grad)*inv_n",
+ * ahora "lr*(grad*inv_n)") porque el momentum estandar exige aplicar lr al
+ * final, no antes de acumular en velocity -- eso puede diferir en el ultimo
+ * bit de redondeo, igual de insignificante que el no-determinismo que ya
+ * introduce el atomicAdd de bce_loss_kernel entre corridas.
+ */
+__global__ void sgd_update_kernel(float *param, const float *grad, float *velocity, float lr, float inv_n, float momentum, float l2, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
-        param[idx] -= lr * grad[idx] * inv_n;
+        float grad_total = grad[idx] * inv_n + l2 * param[idx];
+        float v = momentum * velocity[idx] + grad_total;
+        velocity[idx] = v;
+        param[idx] -= lr * v;
     }
 }
 
@@ -390,14 +443,63 @@ void forward_pass(const float *x_d, const float *w1_d, const float *b1_d, const 
 }
 
 /* ------------------------------------------------------------------------ */
+/* Flags opcionales (aditivas, ver doc comment al inicio del archivo)       */
+/* ------------------------------------------------------------------------ */
+
+typedef struct {
+    float momentum;   /* 0.0 = SGD simple (default, comportamiento original) */
+    float l2;         /* 0.0 = sin weight decay (default)                   */
+    int use_he_init;  /* 0 = Glorot en W1 (default), 1 = He                  */
+    int save_best;    /* 0 = guarda la ultima epoca (default), 1 = la mejor  */
+    float lr_decay;   /* 1.0 = sin decaimiento (default)                     */
+} train_options_t;
+
+train_options_t parse_options(int argc, char **argv, int start_index) {
+    train_options_t opts;
+    opts.momentum = 0.0f;
+    opts.l2 = 0.0f;
+    opts.use_he_init = 0;
+    opts.save_best = 0;
+    opts.lr_decay = 1.0f;
+
+    for (int i = start_index; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strncmp(arg, "--momentum=", 11) == 0) {
+            opts.momentum = strtof(arg + 11, NULL);
+        } else if (strncmp(arg, "--l2=", 5) == 0) {
+            opts.l2 = strtof(arg + 5, NULL);
+        } else if (strncmp(arg, "--init=", 7) == 0) {
+            const char *val = arg + 7;
+            if (strcmp(val, "he") == 0) {
+                opts.use_he_init = 1;
+            } else if (strcmp(val, "glorot") == 0) {
+                opts.use_he_init = 0;
+            } else {
+                fprintf(stderr, "ERROR: --init debe ser 'he' o 'glorot' (recibido '%s')\n", val);
+                exit(EXIT_FAILURE);
+            }
+        } else if (strcmp(arg, "--save-best") == 0) {
+            opts.save_best = 1;
+        } else if (strncmp(arg, "--lr-decay=", 11) == 0) {
+            opts.lr_decay = strtof(arg + 11, NULL);
+        } else {
+            fprintf(stderr, "ERROR: flag desconocida '%s'\n", arg);
+            exit(EXIT_FAILURE);
+        }
+    }
+    return opts;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Programa principal                                                       */
 /* ------------------------------------------------------------------------ */
 
 int main(int argc, char **argv) {
-    if (argc != 8) {
+    if (argc < 8) {
         fprintf(stderr,
                 "Uso: %s <train_csv> <val_csv> <hidden_units> <learning_rate> "
-                "<epochs> <block_size> <weights_out>\n",
+                "<epochs> <block_size> <weights_out> [--momentum=M] [--l2=L] "
+                "[--init=he|glorot] [--save-best] [--lr-decay=G]\n",
                 argv[0]);
         return EXIT_FAILURE;
     }
@@ -409,6 +511,7 @@ int main(int argc, char **argv) {
     int epochs = atoi(argv[5]);
     int block_size = atoi(argv[6]);
     const char *weights_out = argv[7];
+    train_options_t opts = parse_options(argc, argv, 8);
 
     if (hidden_units <= 0 || epochs <= 0) {
         fprintf(stderr, "ERROR: hidden_units y epochs deben ser positivos\n");
@@ -429,6 +532,11 @@ int main(int argc, char **argv) {
     cudaDeviceProp prop;
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
     printf("INFO,gpu_name,%s\n", prop.name);
+    printf("INFO,momentum,%g\n", opts.momentum);
+    printf("INFO,l2,%g\n", opts.l2);
+    printf("INFO,init,%s\n", opts.use_he_init ? "he" : "glorot");
+    printf("INFO,save_best,%d\n", opts.save_best);
+    printf("INFO,lr_decay,%g\n", opts.lr_decay);
 
     srand(42);
 
@@ -454,8 +562,12 @@ int main(int argc, char **argv) {
     float *w2_h = (float *)malloc((size_t)h * sizeof(float));
     float *b2_h = (float *)calloc(1, sizeof(float));
 
-    init_glorot_uniform(w1_h, d, h);
-    init_glorot_uniform(w2_h, h, 1);
+    if (opts.use_he_init) {
+        init_he_uniform(w1_h, d, h);
+    } else {
+        init_glorot_uniform(w1_h, d, h);
+    }
+    init_glorot_uniform(w2_h, h, 1); /* capa de salida sigue Glorot: no precede a una ReLU */
 
     float *x_train_d, *y_train_d, *x_val_d, *y_val_d;
     float *w1_d, *b1_d, *w2_d, *b2_d;
@@ -463,6 +575,7 @@ int main(int argc, char **argv) {
     float *z1_val_d, *a1_val_d, *z2_val_d, *yhat_val_d;
     float *d_z2_d, *d_z1_d, *dw1_d, *db1_d, *dw2_d, *db2_d;
     float *loss_d;
+    float *vel_w1_d, *vel_b1_d, *vel_w2_d, *vel_b2_d; /* momentum (cero si --momentum no se usa) */
 
     CUDA_CHECK(cudaMalloc(&x_train_d, (size_t)n_train * d * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&y_train_d, (size_t)n_train * sizeof(float)));
@@ -493,6 +606,26 @@ int main(int argc, char **argv) {
 
     CUDA_CHECK(cudaMalloc(&loss_d, sizeof(float)));
 
+    CUDA_CHECK(cudaMalloc(&vel_w1_d, (size_t)d * h * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&vel_b1_d, (size_t)h * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&vel_w2_d, (size_t)h * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&vel_b2_d, sizeof(float)));
+    CUDA_CHECK(cudaMemset(vel_w1_d, 0, (size_t)d * h * sizeof(float)));
+    CUDA_CHECK(cudaMemset(vel_b1_d, 0, (size_t)h * sizeof(float)));
+    CUDA_CHECK(cudaMemset(vel_w2_d, 0, (size_t)h * sizeof(float)));
+    CUDA_CHECK(cudaMemset(vel_b2_d, 0, sizeof(float)));
+
+    /* Snapshot host de la mejor epoca (solo se usa con --save-best). */
+    float *w1_best_h = NULL, *b1_best_h = NULL, *w2_best_h = NULL, *b2_best_h = NULL;
+    float best_val_loss = FLT_MAX;
+    int best_epoch = -1;
+    if (opts.save_best) {
+        w1_best_h = (float *)malloc((size_t)d * h * sizeof(float));
+        b1_best_h = (float *)malloc((size_t)h * sizeof(float));
+        w2_best_h = (float *)malloc((size_t)h * sizeof(float));
+        b2_best_h = (float *)malloc(sizeof(float));
+    }
+
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
@@ -512,6 +645,7 @@ int main(int argc, char **argv) {
 
     dim3 block_atb(16, 16);
     float inv_n = 1.0f / (float)n_train;
+    float current_lr = learning_rate; /* solo cambia con --lr-decay; default = learning_rate fijo */
 
     float final_train_loss = 0.0f;
     float final_val_loss = 0.0f;
@@ -551,12 +685,12 @@ int main(int argc, char **argv) {
         bias_gradient_kernel<<<blocks_db1, THREADS_PER_BLOCK>>>(d_z1_d, db1_d, n_train, h);
 
         int blocks_w1 = (d * h + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-        sgd_update_kernel<<<blocks_w1, THREADS_PER_BLOCK>>>(w1_d, dw1_d, learning_rate, inv_n, d * h);
+        sgd_update_kernel<<<blocks_w1, THREADS_PER_BLOCK>>>(w1_d, dw1_d, vel_w1_d, current_lr, inv_n, opts.momentum, opts.l2, d * h);
         int blocks_b1 = (h + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-        sgd_update_kernel<<<blocks_b1, THREADS_PER_BLOCK>>>(b1_d, db1_d, learning_rate, inv_n, h);
+        sgd_update_kernel<<<blocks_b1, THREADS_PER_BLOCK>>>(b1_d, db1_d, vel_b1_d, current_lr, inv_n, opts.momentum, opts.l2, h);
         int blocks_w2 = (h + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-        sgd_update_kernel<<<blocks_w2, THREADS_PER_BLOCK>>>(w2_d, dw2_d, learning_rate, inv_n, h);
-        sgd_update_kernel<<<1, 1>>>(b2_d, db2_d, learning_rate, inv_n, 1);
+        sgd_update_kernel<<<blocks_w2, THREADS_PER_BLOCK>>>(w2_d, dw2_d, vel_w2_d, current_lr, inv_n, opts.momentum, opts.l2, h);
+        sgd_update_kernel<<<1, 1>>>(b2_d, db2_d, vel_b2_d, current_lr, inv_n, opts.momentum, opts.l2, 1);
 
         forward_pass(x_val_d, w1_d, b1_d, w2_d, b2_d,
                      z1_val_d, a1_val_d, z2_val_d, yhat_val_d,
@@ -584,22 +718,47 @@ int main(int argc, char **argv) {
         float val_accuracy = (float)correct / (float)n_val;
         free(yhat_val_h);
 
+        /* Pesos ya actualizados este epoch (el SGD corrio antes del forward
+         * de validacion), asi que este es el snapshot correcto para
+         * --save-best: la mejor val_loss vista hasta ahora. */
+        if (opts.save_best && val_loss < best_val_loss) {
+            best_val_loss = val_loss;
+            best_epoch = epoch;
+            CUDA_CHECK(cudaMemcpy(w1_best_h, w1_d, (size_t)d * h * sizeof(float), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(b1_best_h, b1_d, (size_t)h * sizeof(float), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(w2_best_h, w2_d, (size_t)h * sizeof(float), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(b2_best_h, b2_d, sizeof(float), cudaMemcpyDeviceToHost));
+        }
+
         final_train_loss = train_loss;
         final_val_loss = val_loss;
         final_val_accuracy = val_accuracy;
 
         printf("EPOCH,%d,%.6f,%.6f,%.6f\n", epoch, train_loss, val_loss, val_accuracy);
         fflush(stdout);
+
+        current_lr *= opts.lr_decay;
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double train_loop_seconds = elapsed_seconds(t0, t1);
 
-    CUDA_CHECK(cudaMemcpy(w1_h, w1_d, (size_t)d * h * sizeof(float), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(b1_h, b1_d, (size_t)h * sizeof(float), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(w2_h, w2_d, (size_t)h * sizeof(float), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(b2_h, b2_d, sizeof(float), cudaMemcpyDeviceToHost));
+    if (opts.save_best && best_epoch >= 0) {
+        /* La mejor epoca, no la ultima: sustituye el snapshot host por el
+         * guardado durante el loop en vez de leer los pesos finales de la GPU. */
+        memcpy(w1_h, w1_best_h, (size_t)d * h * sizeof(float));
+        memcpy(b1_h, b1_best_h, (size_t)h * sizeof(float));
+        memcpy(w2_h, w2_best_h, (size_t)h * sizeof(float));
+        memcpy(b2_h, b2_best_h, sizeof(float));
+        printf("INFO,best_epoch,%d\n", best_epoch);
+        printf("INFO,best_val_loss,%.6f\n", best_val_loss);
+    } else {
+        CUDA_CHECK(cudaMemcpy(w1_h, w1_d, (size_t)d * h * sizeof(float), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(b1_h, b1_d, (size_t)h * sizeof(float), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(w2_h, w2_d, (size_t)h * sizeof(float), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(b2_h, b2_d, sizeof(float), cudaMemcpyDeviceToHost));
+    }
 
     if (!save_weights(weights_out, w1_h, b1_h, w2_h, b2_h, d, h)) {
         fprintf(stderr, "ERROR: no se pudieron guardar los pesos en '%s'\n", weights_out);
@@ -633,11 +792,19 @@ int main(int argc, char **argv) {
     cudaFree(dw2_d);
     cudaFree(db2_d);
     cudaFree(loss_d);
+    cudaFree(vel_w1_d);
+    cudaFree(vel_b1_d);
+    cudaFree(vel_w2_d);
+    cudaFree(vel_b2_d);
 
     free(w1_h);
     free(b1_h);
     free(w2_h);
     free(b2_h);
+    free(w1_best_h);
+    free(b1_best_h);
+    free(w2_best_h);
+    free(b2_best_h);
     free_dataset(&train_set);
     free_dataset(&val_set);
 
