@@ -16,3 +16,4 @@ Las evidencias principales se encuentran en `reporte/evidencias/`, incluyendo cu
 Evidencias OpenMP agregadas:
 - `c_compilation.png` - compilacion del pipeline C/OpenMP con `gcc -fopenmp`.
 - `openmp_speedup_table.png` - tabla y grafica de speedup por hilos.
+- `openmp_pipeline_flow.png` - diagrama Excalidraw exportado del flujo de preprocesamiento.

@@ -10,6 +10,10 @@ The objective of this phase is to transform the raw image collection into a clea
 
 The preparation process followed a sequence of preprocessing steps designed to improve image quality and facilitate efficient model training.
 
+The complete preprocessing flow is shown in the exported Excalidraw evidence image:
+
+![OpenMP preprocessing pipeline flow](evidencias/openmp_pipeline_flow.png)
+
 ### 1. Data Review and Cleaning
 
 The original dataset was inspected to verify the correctness of class labels and image quality.
