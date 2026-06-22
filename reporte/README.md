@@ -12,3 +12,7 @@ Reporte final en Markdown o PDF con analisis del pipeline, speedups, metricas y 
 ## Evidencias
 
 Las evidencias principales se encuentran en `reporte/evidencias/`, incluyendo curvas de perdida, matriz de confusion y metricas finales del test set.
+
+Evidencias OpenMP agregadas:
+- `c_compilation.png` - compilacion del pipeline C/OpenMP con `gcc -fopenmp`.
+- `openmp_speedup_table.png` - tabla y grafica de speedup por hilos.

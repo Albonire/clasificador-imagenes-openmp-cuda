@@ -97,12 +97,12 @@ The first stage focused on transforming the original images into a structured da
 
 | Threads | Time (s) | Speedup |
 |---------:|---------:|---------:|
-| 1 | 31.712 | 1.00 |
-| 2 | 35.153 | 0.90 |
-| 4 | 14.204 | 2.23 |
-| 8 | 13.912 | 2.28 |
+| 1 | 27.262 | 1.00 |
+| 2 | 17.325 | 1.57 |
+| 4 | 14.155 | 1.93 |
+| 8 | 13.449 | 2.03 |
 
-The results show that parallelism improved performance when using 4 and 8 threads. However, execution with 2 threads was slower than the serial version, demonstrating that parallelism does not always produce immediate gains.
+The results show that parallelism improved performance for 2, 4, and 8 threads. The highest speedup was obtained with 8 threads, although the improvement was sublinear due to synchronization, disk writing, and thread management overhead.
 
 ### Lessons Learned
 
