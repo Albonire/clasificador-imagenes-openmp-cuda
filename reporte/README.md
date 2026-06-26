@@ -7,6 +7,7 @@ Reporte final en Markdown o PDF con analisis del pipeline, speedups, metricas y 
 - `CRISP-DM Phase 1.md` - Business Understanding.
 - `CRISP-DM Phase 2.md` - Data Understanding.
 - `CRISP-DM Phase 3.md` - Data Preparation.
+- `CRISP-DM Phase 4.md` - Modeling (MLP architecture, training, hyperparameters).
 - `CRISP-DM Phase 5.md` - Evaluacion, metricas, matriz de confusion y reflexiones.
 
 ## Evidencias
