@@ -9,7 +9,9 @@ Reporte final en Markdown o PDF con analisis del pipeline, speedups, metricas y 
 - `CRISP-DM Phase 3.md` - Data Preparation.
 - `CRISP-DM Phase 4.md` - Modeling (MLP architecture, training, hyperparameters).
 - `CRISP-DM Phase 5.md` - Evaluacion, metricas, matriz de confusion y reflexiones.
+- `CRISP-DM Phase 6.md` - Despliegue Streamlit (arquitectura, Docker, inferencia, validacion).
 - `openmp_results.md` - Tabla de speedup, grafica y analisis de Ley de Amdahl (Etapa 1).
+- `final_report.md` - Reporte final consolidado y conclusiones del proyecto.
 
 ## Evidencias
 
