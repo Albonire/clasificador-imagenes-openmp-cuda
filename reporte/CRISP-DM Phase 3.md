@@ -167,6 +167,39 @@ The final dataset contains:
 
 ---
 
+## OpenMP Preprocessing Results
+
+Stage 1 preprocessing was implemented in C with OpenMP (`etapa1_openmp/preprocess_serial.c`). The image loop uses `#pragma omp parallel for schedule(dynamic)`; the serial baseline is `OMP_NUM_THREADS=1`. Benchmarks were run on **3,312 images** with `gcc -Wall -Wextra -O2 -fopenmp`, measuring end-to-end time with `omp_get_wtime()` (CSV creation, both class directories, and file close).
+
+Speedup is defined as \(S(p) = T_1 / T_p\), where \(T_1\) is the time with one thread and \(T_p\) with \(p\) threads.
+
+| Threads | Time (s) | Speedup | Efficiency |
+|--------:|---------:|--------:|-----------:|
+| 1 | 27.262 | 1.00 | 1.00 |
+| 2 | 17.325 | 1.57 | 0.79 |
+| 4 | 14.155 | 1.93 | 0.48 |
+| 8 | 13.449 | 2.03 | 0.25 |
+
+![OpenMP speedup table and curve](evidencias/openmp_speedup_table.png)
+
+Parallelism reduced total runtime at every thread count tested. The best measured speedup is **2.03×** at 8 threads (~51% less time than serial). Gains are sublinear: efficiency falls to **0.25** at 8 threads because part of the pipeline remains serial or synchronized.
+
+### Amdahl's Law
+
+Amdahl's law models speedup as \(S(p) = 1 / (s + (1-s)/p)\), where \(s\) is the serial fraction. Fitting \(T(p) = sT_1 + (1-s)T_1/p\) to the measurements yields:
+
+| Quantity | Value |
+|----------|------:|
+| Serial fraction \(s\) | 0.38 |
+| Maximum theoretical speedup \(1/s\) | 2.61× |
+| Best measured speedup | 2.03× (78% of ceiling) |
+
+The main scalability limiter is serialized CSV output inside `#pragma omp critical(csv_write)`: threads process images in parallel but append rows one at a time. Directory traversal and per-class setup also run outside the parallel region.
+
+Full methodology, the Amdahl decomposition plot, and regeneration instructions are documented in [`openmp_results.md`](openmp_results.md).
+
+---
+
 ## Conclusions
 
 The data preparation phase transformed the original image collection into a structured dataset suitable for machine learning and parallel computing experiments. Through resizing, grayscale conversion, filtering, normalization, serialization, and stratified splitting, the dataset became more consistent, efficient to process, and ready for the subsequent modeling and evaluation phases.

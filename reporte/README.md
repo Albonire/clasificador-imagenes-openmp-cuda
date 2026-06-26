@@ -9,6 +9,7 @@ Reporte final en Markdown o PDF con analisis del pipeline, speedups, metricas y 
 - `CRISP-DM Phase 3.md` - Data Preparation.
 - `CRISP-DM Phase 4.md` - Modeling (MLP architecture, training, hyperparameters).
 - `CRISP-DM Phase 5.md` - Evaluacion, metricas, matriz de confusion y reflexiones.
+- `openmp_results.md` - Tabla de speedup, grafica y analisis de Ley de Amdahl (Etapa 1).
 
 ## Evidencias
 

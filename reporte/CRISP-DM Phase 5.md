@@ -95,14 +95,18 @@ The first stage focused on transforming the original images into a structured da
 
 ### Observed Results
 
-| Threads | Time (s) | Speedup |
-|---------:|---------:|---------:|
-| 1 | 27.262 | 1.00 |
-| 2 | 17.325 | 1.57 |
-| 4 | 14.155 | 1.93 |
-| 8 | 13.449 | 2.03 |
+See the full write-up in [`openmp_results.md`](openmp_results.md) (speedup table, graphs, and Amdahl analysis).
 
-The results show that parallelism improved performance for 2, 4, and 8 threads. The highest speedup was obtained with 8 threads, although the improvement was sublinear due to synchronization, disk writing, and thread management overhead.
+| Threads | Time (s) | Speedup | Efficiency |
+|---------:|---------:|---------:|-----------:|
+| 1 | 27.262 | 1.00 | 1.00 |
+| 2 | 17.325 | 1.57 | 0.79 |
+| 4 | 14.155 | 1.93 | 0.48 |
+| 8 | 13.449 | 2.03 | 0.25 |
+
+![OpenMP speedup](evidencias/openmp_speedup_table.png)
+
+The results show that parallelism improved performance for 2, 4, and 8 threads. The highest speedup was **2.03×** with 8 threads. Gains are sublinear: an Amdahl fit on the measurements estimates a serial fraction of **0.38** and a maximum theoretical speedup of **2.61×**, limited mainly by serialized CSV writes inside `#pragma omp critical(csv_write)`.
 
 ### Lessons Learned
 
